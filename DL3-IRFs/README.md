@@ -31,7 +31,7 @@ make convertSensitivityFilesToFITS
 General syntax:
 
 ```bash
-./convertSensitivityFilesToFITS <file.root> <file.fits.gz> 3D
+./convertSensitivityFilesToFITS <file.root> <file.fits.gz> 3D [noplots | --fit-output-dir DIR]
 ```
 
 (3D option is the default)
@@ -44,8 +44,43 @@ $  docker run --rm -it -v "$(pwd)":/workdir \
    /data/Converters/DL3-IRFs/convertSensitivityFilesToFITS \
    /workdir/Prod5-South-20deg-AverageAz-14MSTs37SSTs.180000s-v0.1.root \
    /workdir/Prod5-South-20deg-AverageAz-14MSTs37SSTs.180000s-v0.1.fits.gz \
-   3D
+  3D --fit-output-dir /workdir/psf_fit_diagnostics
 ```
+
+## Point-spread function
+
+Both PSF HDUs are derived from the radial distributions in `AngularPSF2DEtrue_offaxis`:
+
+- `PSF_TABLE`: the (normalised) radial distributions.
+- `PSF_3GAUSS`: a mixture of three 2D Gaussians fitted (binned maximum likelihood) to the same distributions in each true-energy and off-axis bin, on the energy and off-axis grid of `AngularPSF2DEtrue_offaxis`.
+  `SCALE` is normalised such that the mixture integrates to one.
+  The sigma ratios of the components are smoothed over neighbouring energy bins, as gammapy interpolates the mixture parameters between bins.
+  Bins without sufficient statistics (sum of entries <= 10, or fewer than 10 estimated events) are set to zero.
+
+### PSF fit report and plots
+
+For each converted file, goodness-of-fit statistics are printed to the console. The CSV and PNG diagnostics go into a directory named `<FITS-directory>_psf_fit_diagnostics` alongside the FITS directory by default. Override it with `--fit-output-dir DIR`, or use `noplots` to skip writing diagnostics. When running in a container, choose a diagnostics path on a writable host mount.
+
+- `<name>_psf_fit.csv`: fit parameters and quality of each fitted bin.
+- `<name>_psf_fit_offaxis<N>.png`: one plot per off-axis bin with six true-energy bins each: radial PSF density of the histogram and of the fit (with its three components), and the ratio of the enclosed fractions.
+- `<name>_psf_fit_quality.png`: a per-file overview of reduced chi-square, KS distance, and absolute relative R68 deviation across true-energy and off-axis bins. Gray bins have no fit or no value for that metric.
+
+Each PNG shows the exact FITS basename and, when recognized, the production, site, zenith angle, light conditions, subarray, and exposure encoded in it.
+
+From the repository root, `bash convert_all_irfs.sh --north` keeps the FITS subdirectories and writes all diagnostics directly to `DL3-IRFs/north_irf_conversion_goodness_of_fit`. The `--south` batch uses `DL3-IRFs/south_irf_conversion_goodness_of_fit`. Either accepts `--fit-output-dir DIR` to override the shared directory. Rebuild the Podman image with the updated converter before using the option. The batch still skips existing FITS files, so use a fresh FITS output or rerun those conversions individually to generate new diagnostics for existing files.
+
+Goodness-of-fit metrics (per bin, shown in the plots and in the CSV file):
+
+- `chi2/ndf`: Pearson chi2 of the fit to the radial histogram, with radial bins merged to at least 5 expected events (ndf = bins - 1 - 3 fitted parameters).
+  The histogram contents are weighted; the number of events is taken from the histogram errors if stored (`Sumw2`), otherwise estimated as the sum of the contents divided by the smallest filled bin (the weight of a single event).
+- `KS distance`: largest difference between the enclosed fractions of fit and histogram.
+- `R68 hist./fit`: 68% containment radii.
+
+![PSF fits](docs/psf_fit_full_statistics.png)
+
+Fits scatter with the statistics of the histogram: `chi2/ndf` stays close to one (a statistically consistent fit), but the histogram itself (and hence `PSF_TABLE` and the fit) becomes noisy.
+The conversion report warns about bins with fewer than 100 events.
+[downsample_psf_histogram.C](src/downsample_psf_histogram.C) reduces the statistics of the PSF histogram in a ROOT file for testing, e.g. [10% of the events](docs/psf_fit_10pct_events.png) or [1% of the events](docs/psf_fit_1pct_events.png).
 
 ## Testing
 

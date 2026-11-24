@@ -6,6 +6,7 @@
 
 #include "VDL3IRFs.h"
 #include "TSystem.h"
+#include <filesystem>
 
 using namespace std;
 
@@ -29,19 +30,31 @@ char* getArrayName( TFile *fData )
 
 int main( int argc, char* argv[] )
 {
-    if( argc != 4 )
+    if( argc == 1 || ( argc == 2 && string( argv[1] ) == "--help" ) || argc < 4 )
     {
         cout << endl;
         cout << "./convertSensitivityFilesToFITS <input root file (.root)> ";
         cout << "<output FITS file (.fits/.fits.gz)> ";
-        cout << " <2D/3D>" << endl;
+        cout << " <2D/3D> [noplots | --fit-output-dir DIR]" << endl;
         cout << endl;
         cout << " converts IRFs in ROOT format to GADF FITS format" << endl;
         cout << "     existing files are overwritten" << endl;
         cout << endl;
         cout << "\t <2D/3D> 3D: extrapolate 2D histograms to 3D (default)" << endl;
+        cout << "\t noplots: do not write the PSF fit report (.csv) and plots (.png)" << endl;
+        cout << "\t --fit-output-dir DIR: write PSF diagnostics to DIR" << endl;
+        cout << "\t     default: <FITS-directory>_psf_fit_diagnostics, adjacent to the FITS directory" << endl;
         cout << endl;
-        exit( EXIT_SUCCESS );
+        return argc == 1 || ( argc == 2 && string( argv[1] ) == "--help" ) ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
+    const bool fPSFFitPlots = !( argc == 5 && string( argv[4] ) == "noplots" );
+    const bool customFitDir = argc == 6 && string( argv[4] ) == "--fit-output-dir"
+                              && argv[5][0] != '\0';
+    if( argc != 4 && fPSFFitPlots && !customFitDir )
+    {
+        cerr << "Expected noplots or --fit-output-dir DIR; see --help" << endl;
+        return EXIT_FAILURE;
     }
     cout << "Converting IRFs in ROOT to GADF FITS format" << endl;
     cout << "-------------------------------------------" << endl;
@@ -50,6 +63,27 @@ int main( int argc, char* argv[] )
     string fRootFile = argv[1];
     string fFitsFileName = argv[2];
     string f2D3D = argv[3];
+
+    string fPSFFitBase;
+    if( fPSFFitPlots )
+    {
+        const auto fitsPath = filesystem::absolute( fFitsFileName ).lexically_normal();
+        const auto fitsDir = fitsPath.parent_path();
+        const auto reportDir = customFitDir ? filesystem::path( argv[5] )
+                               : fitsDir.parent_path() / ( fitsDir.filename().string() + "_psf_fit_diagnostics" );
+        auto reportName = fitsPath.filename();
+        if( reportName.extension() == ".gz" ) reportName = reportName.stem();
+        if( reportName.extension() == ".fits" ) reportName = reportName.stem();
+
+        error_code error;
+        filesystem::create_directories( reportDir, error );
+        if( error )
+        {
+            cerr << "Cannot create PSF diagnostics directory " << reportDir << ": " << error.message() << endl;
+            return EXIT_FAILURE;
+        }
+        fPSFFitBase = ( reportDir / reportName ).string();
+    }
 
     cout << "Reading root file from " << fRootFile << endl;
     cout << "Writing FITS file to " << fFitsFileName << endl;
@@ -82,15 +116,17 @@ int main( int argc, char* argv[] )
          (char*)getArrayName(fData) );
 
     // psf
-    cout << "Writing gamma-ray point-spread function (Gaussian approximation)" << endl;
-    a.write_psf_gauss(
-         (TH2F*)fData->Get( "AngResEtrue_offaxis" ),
-         (char*)getArrayName(fData) );
-
-    cout << "Writing gamma-ray point-spread function (3D table)" << endl;
     TH3F* psf_table_hist = (TH3F*)fData->Get( "AngularPSF2DEtrue_offaxis" );
     if( psf_table_hist )
     {
+        cout << "Writing gamma-ray point-spread function (Gaussian mixture)" << endl;
+        if( !a.write_psf_gauss( psf_table_hist, (char*)getArrayName(fData),
+                                fPSFFitBase, filesystem::path( fFitsFileName ).filename().string() ) )
+        {
+            cerr << "Error: Failed to write PSF_3GAUSS" << endl;
+        }
+
+        cout << "Writing gamma-ray point-spread function (3D table)" << endl;
         if( !a.write_psf_table( psf_table_hist, (char*)getArrayName(fData) ) )
         {
             cerr << "Error: Failed to write PSF_TABLE" << endl;
@@ -98,7 +134,7 @@ int main( int argc, char* argv[] )
     }
     else
     {
-        cout << "Warning: AngularPSF2DEtrue_offaxis histogram not found, skipping PSF_TABLE" << endl;
+        cout << "Warning: AngularPSF2DEtrue_offaxis histogram not found, skipping PSF_3GAUSS and PSF_TABLE" << endl;
     }
 
     // edisp
