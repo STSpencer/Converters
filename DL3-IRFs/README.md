@@ -80,7 +80,6 @@ Goodness-of-fit metrics (per bin, shown in the plots and in the CSV file):
 
 Fits scatter with the statistics of the histogram: `chi2/ndf` stays close to one (a statistically consistent fit), but the histogram itself (and hence `PSF_TABLE` and the fit) becomes noisy.
 The conversion report warns about bins with fewer than 100 events.
-[downsample_psf_histogram.C](src/downsample_psf_histogram.C) reduces the statistics of the PSF histogram in a ROOT file for testing, e.g. [10% of the events](docs/psf_fit_10pct_events.png) or [1% of the events](docs/psf_fit_1pct_events.png).
 
 ## Testing
 
